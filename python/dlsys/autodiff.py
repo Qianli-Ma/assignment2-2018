@@ -590,11 +590,11 @@ class Executor(object):
         """TODO: Your code here"""
         self.node_to_shape_map = {}
         for node in self.topo_order:
-            if isinstance(node.op, PlaceholderOp):
+            if node in feed_shapes:
                 self.node_to_shape_map[node] = feed_shapes[node]
-            else:
-                self.node_to_shape_map[node] = node.op.infer_shape(
-                    node, [inp.shape for inp in node.inputs])
+                continue
+            input_shapes = [self.node_to_shape_map[n] for n in node.inputs]
+            self.node_to_shape_map[node] = node.op.infer_shape(node, input_shapes)
 
     def memory_plan(self, feed_shapes):
         """Allocates tvm.nd.array for every node except feed_dict nodes.
