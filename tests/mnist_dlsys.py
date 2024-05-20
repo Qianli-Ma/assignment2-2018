@@ -3,9 +3,13 @@ import argparse
 import six.moves.cPickle as pickle
 import gzip
 import os
+import sys
 import time
 
 import tvm
+
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "python"))
+
 from dlsys import autodiff as ad
 from dlsys import tvm_op
 
