@@ -157,15 +157,26 @@ def make_matrix_softmax(shape, tgt, tgt_host, func_name, dtype="float32"):
         softmax(x)= e_x / e_x.sum()
     """
 
-    A = tvm.placeholder(shape, dtype=dtype, name="A")
-    k = tvm.reduce_axis((0, shape[1]), name='k')
-    max_val = tvm.compute((shape[0],), lambda i: tvm.max(A[i, k], axis=k))
-    e_x = tvm.compute(shape, lambda i, j: tvm.exp(A[i, j] - max_val[i]))
-    sum_val = tvm.compute((shape[0],), lambda i: tvm.sum(e_x[i, k], axis=k))
-    B = tvm.compute(shape, lambda i, j: e_x[i, j] / sum_val[i])
+    assert len(shape) == 2
+    num_batch, num_class = shape
+    logits = tvm.placeholder(shape, dtype, "logits")
+    truth = tvm.placeholder(shape, dtype, "truth")
+    k = tvm.reduce_axis((0, num_class), name="k")
+    max_logits = tvm.compute((num_batch,), lambda i: tvm.max(logits[i, k], axis=k))
+    logits_shifted = tvm.compute(shape, lambda i, j: logits[i, j] - max_logits[i])
+    exps = tvm.compute(shape, lambda *i: tvm.exp(logits_shifted(*i)))
+    k = tvm.reduce_axis((0, num_class), name="k")
+    exps_sum = tvm.compute((num_batch,), lambda i: tvm.sum(exps[i, k], axis=k))
+    neg_pred_log = tvm.compute(shape, lambda i,j: tvm.log(exps_sum[i]) - logits_shifted[i, j])
+    ewise_prod = tvm.compute(shape, lambda *i: truth(*i) * neg_pred_log(*i))
 
-    s = tvm.create_schedule(B.op)
-    f = tvm.build(s, [A, B], tgt, target_host=tgt_host, name=func_name)
+    i = tvm.reduce_axis((0, num_batch), name="i")
+    j = tvm.reduce_axis((0, num_class), name="j")
+    ce_sum = tvm.compute((1,), lambda _: tvm.sum(ewise_prod[i, j], axis=[i, j]))
+    ce_mean = tvm.compute((1,), lambda _: ce_sum[0] / tvm.const(num_batch, dtype))
+
+    schedule = tvm.create_schedule(ce_mean.op)
+    f = tvm.build(schedule, [logits, truth, ce_mean], tgt, tgt_host, func_name)
     return f
 
 def make_matrix_softmax_cross_entropy(shape, tgt, tgt_host, func_name,
