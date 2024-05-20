@@ -140,7 +140,7 @@ def make_conv2d(shapeX, shapeF, tgt, tgt_host, func_name, dtype="float32"):
 
     output = tvm.compute((N, M, H - R + 1, W - S + 1),
                          lambda n, m, i, j: tvm.sum(
-                             Input[n, dc, i + di, j + dj] * Filter[m, dc, di, dj], axis=[di, dj, dc]),
+                             input[n, dc, i + di, j + dj] * filter[m, dc, di, dj], axis=[di, dj, dc]),
                          name='Output')
     schedule = tvm.create_schedule(output.op)
     f = tvm.build(schedule, [input, filter, output],
@@ -164,7 +164,7 @@ def make_matrix_softmax(shape, tgt, tgt_host, func_name, dtype="float32"):
     sum_val = tvm.compute((shape[0],), lambda i: tvm.sum(e_x[i, k], axis=k))
     B = tvm.compute(shape, lambda i, j: e_x[i, j] / sum_val[i])
 
-    s = tvm.create_schedule(C.op)
+    s = tvm.create_schedule(B.op)
     f = tvm.build(s, [A, B], tgt, target_host=tgt_host, name=func_name)
     return f
 
