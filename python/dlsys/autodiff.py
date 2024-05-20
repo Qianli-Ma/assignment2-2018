@@ -293,7 +293,7 @@ class MatMulOp(Op):
 
     def compiled_func(self, node, input_shapes, tgt, tgt_host):
         """TODO: Your code here"""
-        return tvm_op.make_matmul(
+        return tvm_op.make_matrix_mul(
             input_shapes[0], node.matmul_attr_trans_A,
             input_shapes[1], node.matmul_attr_trans_B,
             tgt, tgt_host, "matmul")
