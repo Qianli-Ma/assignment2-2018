@@ -1,5 +1,11 @@
 import numpy as np
 import tvm
+
+import sys
+import os
+
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "python"))
+
 from dlsys import autodiff, tvm_op
 
 tgt_host="llvm"
