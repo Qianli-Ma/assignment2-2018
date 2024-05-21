@@ -425,7 +425,7 @@ class BroadcastToOp(Op):
     def compiled_func(self, node, input_shapes, tgt, tgt_host):
         """TODO: Your code here"""
         return tvm_op.make_broadcast_to(
-            input_shapes[0], input_shapes[1], tgt, tgt_host, "broadcast_to")
+            input_shapes[0], input_shapes[1], tgt, tgt_host, "make_broadcast_to")
 
 def softmax_func(y):
     """Numerically stable softmax."""
@@ -549,9 +549,6 @@ relu_op = ReluOp()
 relu_gradient_op = ReluGradientOp()
 
 
-def lookup_node_shape(n):
-    return feed_shapes.get(n) or self.node_to_shape_map[n]
-
 class Executor(object):
     """Executor computes values for given set of nodes in computation graph."""
     def __init__(self, eval_node_list, ctx=None):
@@ -592,8 +589,11 @@ class Executor(object):
         """
         """TODO: Your code here"""
 
+        def lookup_node_shape(n):
+            return feed_shapes.get(n) or self.node_to_shape_map[n]
+
         self.node_to_shape_map = {}
-        for node in filter(lambda n: n in feed_shapes, self.topo_order):
+        for node in filter(lambda n: n not in feed_shapes, self.topo_order):
             input_shapes = [lookup_node_shape(input_node) for input_node in node.inputs]
             self.node_to_shape_map[node] = node.op.infer_shape(node, input_shapes)
 
@@ -612,8 +612,11 @@ class Executor(object):
         """
         """TODO: Your code here"""
 
+        def lookup_node_shape(n):
+            return feed_shapes.get(n) or self.node_to_shape_map[n]
+
         self.node_to_arr_map = {}
-        for node in filter(lambda n: n in feed_shapes, self.topo_order):
+        for node in filter(lambda n: n not in feed_shapes, self.topo_order):
             self.node_to_shape_map[node] = tvm.ndarray.empty(lookup_node_shape(node))
 
     def compile_funcs(self, feed_shapes):
@@ -627,8 +630,12 @@ class Executor(object):
         feed_shapes: node->shapes mapping for feed_dict nodes.
         """
         """TODO: Your code here"""
+
+        def lookup_node_shape(n):
+            return feed_shapes.get(n) or self.node_to_shape_map[n]
+
         self.node_to_compiled_func = {}
-        for node in filter(lambda n: n in feed_shapes, self.topo_order):
+        for node in filter(lambda n: n not in feed_shapes, self.topo_order):
             input_shapes = [lookup_node_shape(input_node) for input_node in node.inputs]
             self.node_to_compiled_func[node] = node.op.compiled_func(
                 node, input_shapes, self.tgt, self.tgt_host)
