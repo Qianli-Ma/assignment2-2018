@@ -2,7 +2,6 @@
 from __future__ import absolute_import
 import re
 
-from httpx import get
 import numpy as np
 import tvm
 from . import tvm_op
@@ -589,11 +588,14 @@ class Executor(object):
         feed_shapes: node->shapes mapping for feed_dict nodes.
         """
         """TODO: Your code here"""
+        def lookup_node_shape(n):
+             return feed_shapes.get(n) or self.node_to_shape_map[n]
+
+
         self.node_to_shape_map = {}
         for node in filter(lambda n: n in feed_shapes, self.topo_order):
-            self.node_to_shape_map[node] = node.op.infer_shape(
-                node, [feed_shapes.get(node``) or self.node_to_shape_map[node] for node in node.inputs]
-            )
+            shapes = [lookup_node_shape(input_node) for input_node in node.inputs]
+            self.node_to_shape_map[node] = node.op.infer_shape(node, shapes)
 
     def memory_plan(self, feed_shapes):
         """Allocates tvm.nd.array for every node except feed_dict nodes.
