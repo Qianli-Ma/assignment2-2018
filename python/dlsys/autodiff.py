@@ -1,6 +1,5 @@
 """A library to take autodiff and execute a computation graph """
 from __future__ import absolute_import
-import re
 
 import numpy as np
 import tvm
@@ -209,7 +208,7 @@ class MulOp(Op):
     def compiled_func(self, node, input_shapes, tgt, tgt_host):
         """TODO: Your code here"""
         return tvm_op.make_elemwise_mul(
-            input_shapes[0], tgt, tgt_host, "elem_mul")
+            input_shapes[0], tgt, tgt_host, "make_elemwise_mul")
 
 class MulByConstOp(Op):
     def __call__(self, node_A, const_val):
@@ -233,7 +232,7 @@ class MulByConstOp(Op):
     def compiled_func(self, node, input_shapes, tgt, tgt_host):
         """TODO: Your code here"""
         return tvm_op.make_elemwise_mul_by_const(
-            input_shapes[0], node.const_attr, tgt, tgt_host, "elem_mul_by_const")
+            input_shapes[0], node.const_attr, tgt, tgt_host,"make_elemwise_mul_by_const")
 
 class MatMulOp(Op):
     def __call__(self, node_A, node_B, trans_A=False, trans_B=False):
@@ -296,8 +295,7 @@ class MatMulOp(Op):
         return tvm_op.make_matrix_mul(
             input_shapes[0], node.matmul_attr_trans_A,
             input_shapes[1], node.matmul_attr_trans_B,
-            tgt, tgt_host, "matmul")
-
+            tgt, tgt_host, "make_matrix_mul")
 
 class PlaceholderOp(Op):
     def __call__(self):
@@ -425,7 +423,7 @@ class BroadcastToOp(Op):
     def compiled_func(self, node, input_shapes, tgt, tgt_host):
         """TODO: Your code here"""
         return tvm_op.make_broadcast_to(
-            input_shapes[0], input_shapes[1], tgt, tgt_host, "make_broadcast_to")
+            input_shapes[0], input_shapes[1],tgt, tgt_host, "make_broadcast_to")
 
 def softmax_func(y):
     """Numerically stable softmax."""
@@ -460,8 +458,8 @@ class SoftmaxCrossEntropyOp(Op):
 
     def compiled_func(self, node, input_shapes, tgt, tgt_host):
         """TODO: Your code here"""
-        return tvm_op.make_matrix_softmax_cross_entropy(
-            input_shapes[0], tgt, tgt_host, "softmax_cross_entropy")
+        return tvm_op.make_matrix_softmax_cross_entropy(input_shapes[0], tgt, tgt_host,
+                                                        "make_matrix_softmax_cross_entropy")
 
 class SoftmaxOp(Op):
     def __call__(self, node_A):
@@ -485,7 +483,8 @@ class SoftmaxOp(Op):
 
     def compiled_func(self, node, input_shapes, tgt, tgt_host):
         """TODO: Your code here"""
-        return tvm_op.make_matrix_softmax(input_shapes[0], tgt, tgt_host, "softmax")
+        return tvm_op.make_matrix_softmax(input_shapes[0], tgt, tgt_host,
+                                          "make_matrix_softmax")
 
 
 class ReluOp(Op):
@@ -507,8 +506,8 @@ class ReluOp(Op):
 
     def compiled_func(self, node, input_shapes, tgt, tgt_host):
         """TODO: Your code here"""
-        return tvm_op.make_relu(input_shapes[0], tgt, tgt_host, "relu")
-
+        return tvm_op.make_relu(input_shapes[0], tgt, tgt_host,
+                                "make_relu")
 
 class ReluGradientOp(Op):
     def __call__(self, node_A, node_B):
@@ -530,7 +529,9 @@ class ReluGradientOp(Op):
 
     def compiled_func(self, node, input_shapes, tgt, tgt_host):
         """TODO: Your code here"""
-        return tvm_op.make_relu_gradient(input_shapes[0], tgt, tgt_host, "relu_gradient")
+        return tvm_op.make_relu_gradient(input_shapes[0], tgt, tgt_host,
+                                         "make_relu_gradient")
+
 
 # Create global singletons of operators.
 add_op = AddOp()
@@ -593,6 +594,7 @@ class Executor(object):
             return feed_shapes.get(n) or self.node_to_shape_map[n]
 
         self.node_to_shape_map = {}
+
         for node in filter(lambda n: n not in feed_shapes, self.topo_order):
             input_shapes = [lookup_node_shape(input_node) for input_node in node.inputs]
             self.node_to_shape_map[node] = node.op.infer_shape(node, input_shapes)
@@ -616,8 +618,9 @@ class Executor(object):
             return feed_shapes.get(n) or self.node_to_shape_map[n]
 
         self.node_to_arr_map = {}
+
         for node in filter(lambda n: n not in feed_shapes, self.topo_order):
-            self.node_to_shape_map[node] = tvm.ndarray.empty(lookup_node_shape(node))
+            self.node_to_arr_map[node] = tvm.ndarray.empty(lookup_node_shape(node))
 
     def compile_funcs(self, feed_shapes):
         """Compile tvm ops to native code.
@@ -635,6 +638,7 @@ class Executor(object):
             return feed_shapes.get(n) or self.node_to_shape_map[n]
 
         self.node_to_compiled_func = {}
+
         for node in filter(lambda n: n not in feed_shapes, self.topo_order):
             input_shapes = [lookup_node_shape(input_node) for input_node in node.inputs]
             self.node_to_compiled_func[node] = node.op.compiled_func(

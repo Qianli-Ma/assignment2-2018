@@ -1,5 +1,4 @@
 from __future__ import absolute_import, print_function
-import sched
 
 import tvm
 import numpy as np
@@ -71,15 +70,10 @@ def make_relu_gradient(shape, tgt, tgt_host, func_name, dtype="float32"):
     """Hint: use tvm.select"""
     A = tvm.placeholder(shape, dtype=dtype, name="A")
     B = tvm.placeholder(shape, dtype=dtype, name="B")
-    C = tvm.compute(A.shape, lambda *i: tvm.select(A(*i)
-                    > 0, B(*i), tvm.const(0, A.dtype)))
-
-    schedule = tvm.create_schedule(C.op)
-    f = tvm.build(schedule, [A, B, C], tgt,
-                  target_host=tgt_host, name=func_name)
-    return f
-
-
+    C = tvm.compute(A.shape, lambda *i: B(*i) * tvm.select(A(*i) > 0,
+                    tvm.const(1, A.dtype), tvm.const(0, A.dtype)))
+    s = tvm.create_schedule(C.op)
+    return tvm.build(s, [A, B, C], tgt, target_host=tgt_host, name=func_name)
 
 def make_matrix_mul(shapeA, transposeA, shapeB, transposeB, tgt, tgt_host,
                     func_name, dtype="float32"):
@@ -88,42 +82,39 @@ def make_matrix_mul(shapeA, transposeA, shapeB, transposeB, tgt, tgt_host,
     """Hint: treat 4 cases of transposeA, transposeB separately"""
     """Hint: for tvm schedule, use split, reorder, vectorize, parallel"""
     """Hint: debug tvm schedule using tvm.lower"""
+    sa = shapeA[::-1] if transposeA else shapeA
+    sb = shapeB[::-1] if transposeB else shapeB
+    m = sa[0]
+    n = sb[1]
+    K = sa[1]
+
     A = tvm.placeholder(shapeA, dtype=dtype, name="A")
     B = tvm.placeholder(shapeB, dtype=dtype, name="B")
+    k = tvm.reduce_axis((0, K), "k")
 
-    if not transposeA and not transposeB:
-        k = tvm.reduce_axis((0, shapeA[1]), name='k')
-        C = tvm.compute((shapeA[0], shapeB[1]), lambda i,
-                        j: tvm.sum(A[i, k] * B[k, j], axis=k))
-
-    elif transposeA and not transposeB:
-        k = tvm.reduce_axis((0, shapeA[0]), name='k')
-        C = tvm.compute((shapeA[1], shapeB[1]), lambda i,
-                        j: tvm.sum(A[k, i] * B[k, j], axis=k))
-
+    if transposeA and transposeB:
+        def func(x, y): return tvm.sum(A[k, x] * B[y, k], axis=k)
     elif not transposeA and transposeB:
-        k = tvm.reduce_axis((0, shapeA[1]), name='k')
-        C = tvm.compute((shapeA[0], shapeB[0]), lambda i,
-                        j: tvm.sum(A[i, k] * B[j, k], axis=k))
+        def func(x, y): return tvm.sum(A[x, k] * B[y, k], axis=k)
+    elif transposeA and not transposeB:
+        def func(x, y): return tvm.sum(A[k, x] * B[k, y], axis=k)
+    else:  # neither.
+        def func(x, y): return tvm.sum(A[x, k] * B[k, y], axis=k)
 
-    else:
-        k = tvm.reduce_axis((0, shapeA[0]), name='k')
-        C = tvm.compute((shapeA[1], shapeB[0]), lambda i,
-                        j: tvm.sum(A[k, i] * B[j, k], axis=k))
-
+    C = tvm.compute((m, n), func, name="C")
     s = tvm.create_schedule(C.op)
-    xo, yo, xi, yi = s[C].tile(
-        C.op.axis[0], C.op.axis[1], x_factor=32, y_factor=64)
-    xk, yk = s[C].split(k, factor=8)
-    s[C].reorder(xo, yo, xk, xi, yi, yk)
-    s[C].parallel(xo)
-    s[C].unroll(yk)
-    f = tvm.build(s, [A, B, C], tgt, target_host=tgt_host, name=func_name)
-    return f
 
+    SPLIT_FACTOR = 16
+    xo, xi = s[C].split(C.op.axis[1], factor=SPLIT_FACTOR)
+
+    s[C].reorder(xi, xo, k)
+    s[C].vectorize(xi)
+    s[C].parallel(xo)
+
+    return tvm.build(s, [A, B, C], tgt, target_host=tgt_host, name=func_name)
 
 def make_conv2d(shapeX, shapeF, tgt, tgt_host, func_name, dtype="float32"):
-    assert(shapeX[1] == shapeF[1])
+    assert (shapeX[1] == shapeF[1])  # Same number of channels.
     N, C, H, W = shapeX
     M, C, R, S = shapeF
 
@@ -134,21 +125,27 @@ def make_conv2d(shapeX, shapeF, tgt, tgt_host, func_name, dtype="float32"):
     input = tvm.placeholder(shapeX, dtype=dtype, name="input")
     filter = tvm.placeholder(shapeF, dtype=dtype, name="filter")
 
-    di = tvm.reduce_axis((0, R), name='di')
-    dj = tvm.reduce_axis((0, S), name='dj')
-    dc = tvm.reduce_axis((0, C), name='dc')
+    di = tvm.reduce_axis((0, S), "di")
+    dj = tvm.reduce_axis((0, R), "dj")
+    dc = tvm.reduce_axis((0, C), "dc")
 
-    output = tvm.compute((N, M, H - R + 1, W - S + 1),
-                         lambda n, m, i, j: tvm.sum(
-                             input[n, dc, i + di, j + dj] * filter[m, dc, di, dj], axis=[di, dj, dc]),
-                         name='Output')
+    out_shape = (shapeX[0], shapeF[0], H - R + 1, W - S + 1)
+
+    output = tvm.compute(
+        out_shape,
+        lambda n, f, i, j: tvm.sum(
+            input[n, dc, i + di, j + dj] * filter[f, dc, di, dj],
+            axis=[dc, di, dj]),
+        name="Output"
+    )
+
     schedule = tvm.create_schedule(output.op)
     f = tvm.build(schedule, [input, filter, output],
                   tgt, target_host=tgt_host, name=func_name)
     return f
 
-def make_matrix_softmax(shape, tgt, tgt_host, func_name, dtype="float32"):
 
+def make_matrix_softmax(shape, tgt, tgt_host, func_name, dtype="float32"):
     """TODO: Your code here"""
     """Hint: use tvm.reduce_axis, tvm.sum, tvm.max, tvm.exp"""
     """Hint: do not reuse the same reduction axis j."""
@@ -157,67 +154,69 @@ def make_matrix_softmax(shape, tgt, tgt_host, func_name, dtype="float32"):
         softmax(x)= e_x / e_x.sum()
     """
 
-    assert len(shape) == 2
-    num_batch, num_class = shape
-    logits = tvm.placeholder(shape, dtype, "logits")
-    truth = tvm.placeholder(shape, dtype, "truth")
-    k = tvm.reduce_axis((0, num_class), name="k")
-    max_logits = tvm.compute((num_batch,), lambda i: tvm.max(logits[i, k], axis=k))
-    logits_shifted = tvm.compute(shape, lambda i, j: logits[i, j] - max_logits[i])
-    exps = tvm.compute(shape, lambda *i: tvm.exp(logits_shifted(*i)))
-    k = tvm.reduce_axis((0, num_class), name="k")
-    exps_sum = tvm.compute((num_batch,), lambda i: tvm.sum(exps[i, k], axis=k))
-    neg_pred_log = tvm.compute(shape, lambda i,j: tvm.log(exps_sum[i]) - logits_shifted[i, j])
-    ewise_prod = tvm.compute(shape, lambda *i: truth(*i) * neg_pred_log(*i))
+    X = tvm.placeholder(shape, dtype=dtype, name="X")
+    j1 = tvm.reduce_axis((0, shape[1]), "j1")
 
-    i = tvm.reduce_axis((0, num_batch), name="i")
-    j = tvm.reduce_axis((0, num_class), name="j")
-    ce_sum = tvm.compute((1,), lambda _: tvm.sum(ewise_prod[i, j], axis=[i, j]))
-    ce_mean = tvm.compute((1,), lambda _: ce_sum[0] / tvm.const(num_batch, dtype))
+    maxX = tvm.compute((shape[0],),
+                       lambda i: tvm.max(X[i, j1], axis=j1),
+                       name="maxX")
 
-    schedule = tvm.create_schedule(ce_mean.op)
-    f = tvm.build(schedule, [logits, truth, ce_mean], tgt, tgt_host, func_name)
-    return f
+    numerator = tvm.compute(shape,
+                            lambda i, j: tvm.exp(X[i, j] - maxX[i]),
+                            name="numerator")
+
+    j2 = tvm.reduce_axis((0, shape[1]), "j2")
+
+    denominator = tvm.compute((shape[0],),
+                              lambda i: tvm.sum(numerator[i, j2], axis=j2),
+                              name="denominator")
+
+    Y = tvm.compute(shape,
+                    lambda i, j: numerator[i, j] / denominator[i],
+                    name="Y")
+    s = tvm.create_schedule(Y.op)
+    return tvm.build(s, [X, Y], tgt, target_host=tgt_host, name=func_name)
 
 def make_matrix_softmax_cross_entropy(shape, tgt, tgt_host, func_name,
                                       dtype="float32"):
     """TODO: Your code here"""
     """Hint: output shape should be (1,)"""
-    A = tvm.placeholder(shape, dtype=dtype, name="A")
-    B = tvm.placeholder(shape, dtype=dtype, name="B")
 
-    k = tvm.reduce_axis((0, shape[1]), name="k")
-    max_A = tvm.compute((shape[0],), lambda i: tvm.max(
-        A[i, k], axis=k), name="max_A")
+    X = tvm.placeholder(shape, dtype=dtype, name="X")
+    Y_orig = tvm.placeholder(shape, dtype=dtype, name="Y_orig")
 
-    exp = tvm.compute(shape, lambda i, j: tvm.exp(
-        A[i, j] - max_A[i]), name="exp")
+    j1 = tvm.reduce_axis((0, shape[1]), "j1")
+    j2 = tvm.reduce_axis((0, shape[1]), "j2")
 
-    k1 = tvm.reduce_axis((0, shape[1]), name="k1")
-    sum_exp = tvm.compute((shape[0],), lambda i: tvm.sum(
-        exp[i, k1], axis=k1), name="sum_exp")
+    maxX = tvm.compute((shape[0],),
+                       lambda i: tvm.max(X[i, j1], axis=j1),
+                       name="maxX")
 
-    softmax = tvm.compute(
-        shape, lambda i, j: exp[i, j] / sum_exp[i], name="softmax")
+    numerator = tvm.compute(shape,
+                            lambda i, j: tvm.exp(X[i, j] - maxX[i]),
+                            name="numerator")
 
-    log = tvm.compute(shape, lambda i, j: tvm.log(softmax[i, j]), name="log")
+    denominator = tvm.compute((shape[0],),
+                              lambda i: tvm.sum(numerator[i, j2], axis=j2),
+                              name="denominator")
 
-    k2 = tvm.reduce_axis((0, shape[1]), name="k2")
-    sum_softmax = tvm.compute((shape[0],), lambda i: tvm.sum(
-        B[i, k2] * log[i, k2], axis=k2), name="sum_softmax")
+    m1 = tvm.reduce_axis((0, shape[0]), "m1")
+    m2 = tvm.reduce_axis((0, shape[1]), "m2")
 
-    k3 = tvm.reduce_axis((0, shape[0]), name="k3")
-    softmax_cross_entropy = tvm.compute(
-        (1,), lambda i: tvm.sum(-1 * sum_softmax[k3] / shape[0], axis=k3))
+    cross_entropy_sum = tvm.compute((1,),
+                                    lambda i: tvm.sum(
+        Y_orig[m1, m2] * tvm.log(numerator[m1, m2] / denominator[m1]),
+        axis=[m1, m2]),
+        name="cross_entropy_sum")
 
-    s = tvm.create_schedule(softmax_cross_entropy.op)
-    f = tvm.build(s, [A, B, softmax_cross_entropy], tgt,
-                  target_host=tgt_host, name=func_name)
+    negated = tvm.compute((1,),
+                          lambda i: -cross_entropy_sum[i] / shape[0],
+                          name="negated")
 
-    return f
+    s = tvm.create_schedule(negated.op)
 
-
-
+    return tvm.build(s, [X, Y_orig, negated], tgt,
+                     target_host=tgt_host, name=func_name)
 
 def make_reduce_sum_axis_zero(shape, tgt, tgt_host, func_name, dtype="float32"):
     A = tvm.placeholder(shape, dtype=dtype, name="A")
