@@ -2,6 +2,7 @@
 from __future__ import absolute_import
 import re
 
+from httpx import get
 import numpy as np
 import tvm
 from . import tvm_op
@@ -179,7 +180,7 @@ class AddByConstOp(Op):
 
     def infer_shape(self, node, input_shapes):
         """TODO: Your code here"""
-        return broadcast_rule(input_shapes[0], (1,))
+        return input_shapes[0]
 
     def compiled_func(self, node, input_shapes, tgt, tgt_host):
         """TODO: Your code here"""
@@ -589,12 +590,10 @@ class Executor(object):
         """
         """TODO: Your code here"""
         self.node_to_shape_map = {}
-        for node in self.topo_order:
-            if node in feed_shapes:
-                self.node_to_shape_map[node] = feed_shapes[node]
-                continue
-            input_shapes = [self.node_to_shape_map[n] for n in node.inputs]
-            self.node_to_shape_map[node] = node.op.infer_shape(node, input_shapes)
+        for node in filter(lambda n: n in feed_shapes, self.topo_order):
+            self.node_to_shape_map[node] = node.op.infer_shape(
+                node, [feed_shapes.get(node``) or self.node_to_shape_map[node] for node in node.inputs]
+            )
 
     def memory_plan(self, feed_shapes):
         """Allocates tvm.nd.array for every node except feed_dict nodes.
@@ -611,11 +610,8 @@ class Executor(object):
         """
         """TODO: Your code here"""
         self.node_to_arr_map = {}
-        for node in self.topo_order:
-            if node in feed_shapes:
-                continue
-            self.node_to_arr_map[node] = tvm.ndarray.empty(
-                self.node_to_shape_map[node], dtype='float32', ctx=self.ctx)
+        for node in filter(lambda n: n in feed_shapes, self.topo_order):
+            self.node_to_arr_map[node] = tvm.ndarray.empty(feed_shapes[node] or self.node_to_shape_map[node])
 
     def compile_funcs(self, feed_shapes):
         """Compile tvm ops to native code.
@@ -629,10 +625,8 @@ class Executor(object):
         """
         """TODO: Your code here"""
         self.node_to_compiled_func = {}
-        for node in self.topo_order:
-            if node in feed_shapes:
-                continue
-            input_shapes = [self.node_to_shape_map[n] for n in node.inputs]
+        for node in filter(lambda n: n in feed_shapes, self.topo_order):
+            input_shapes = [feed_shapes.get[n] or self.node_to_shape_map[n] for n in node.inputs]
             self.node_to_compiled_func[node] = node.op.compiled_func(
                 node, input_shapes, self.tgt, self.tgt_host)
 
