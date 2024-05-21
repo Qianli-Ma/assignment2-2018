@@ -1,3 +1,6 @@
+*The code in this repo is tested with python 3.5 under Ubuntu 16.04 LTS, does not guarantee to run on other configurations*
+
+
 # Assignment 2: Graph Executor with TVM
 
 In [Assignment 1](https://github.com/dlsys-course/assignment1), we implemented the User API layer (computation graph and autodiff) of the deep learning system stack. In this assignment, we will go down the stack, and implement a simple version of the rest of the stack.
