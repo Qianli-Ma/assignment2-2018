@@ -1,5 +1,7 @@
 *The code in this repo is tested with python 3.5 under Ubuntu 16.04 LTS, does not guarantee to run on other configurations*
 
+*TVM used in this repo can be found at [tvm0.2](https://github.com/Qianli-Ma/tvm0.2)*
+
 
 # Assignment 2: Graph Executor with TVM
 
